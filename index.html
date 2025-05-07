@@ -116,15 +116,23 @@
             const axesHelper = new THREE.AxesHelper(3);
             scene.add(axesHelper);
             
-            // Initialize trail with a dummy geometry
+            // Initialize trail with a sun-like material
             const trailMaterial = new THREE.MeshStandardMaterial({
-                color: 0x4ecdc4,
-                emissive: 0x1e6e6a,
-                emissiveIntensity: 0.5,
-                metalness: 0.3,
-                roughness: 0.2
+                color: 0xffaa33, // Warm orange-yellow color
+                emissive: 0xff8844, // Orange-red glow
+                emissiveIntensity: 1.2,
+                metalness: 0.1,
+                roughness: 0.2,
+                transparent: true,
+                opacity: 0.9
             });
             
+            // Add bloom effect to the renderer
+            const bloomPass = {
+                strength: 1.5,
+                radius: 0.5,
+                threshold: 0
+            };
             trail = new THREE.Mesh(
                 new THREE.BufferGeometry(),
                 trailMaterial
@@ -273,6 +281,19 @@
                 }
             }
             
+            // Get first point for center of rotation
+            if (quaternionData.length > 0) {
+                const firstData = quaternionData[0];
+                const forward = new THREE.Vector3(0, 0, -1);
+                forward.applyQuaternion(firstData.quaternion);
+                forward.multiplyScalar(1.5);
+                
+                // If controls exist, update the target
+                if (controls) {
+                    controls.target = forward.clone();
+                }
+            }
+            
             // Reset visualization
             reset();
         }
@@ -343,8 +364,8 @@
                 const tubeGeometry = new THREE.TubeGeometry(
                     path,
                     Math.max(64, trailPoints.length * 3), // tubular segments
-                    0.075, // radius - 50% of previous size (was 0.15)
-                    8, // radial segments
+                    0.05, // radius - slightly larger for glow effect
+                    12, // radial segments - increased for smoother appearance
                     false // closed
                 );
                 
@@ -352,9 +373,13 @@
                     trail.geometry.dispose();
                 }
                 trail.geometry = tubeGeometry;
+                
+                // Add a soft pulsating glow animation
+                const time = Date.now() * 0.001;
+                trail.material.emissiveIntensity = 0.8 + Math.sin(time * 1.5) * 0.2;
             } else if (trailPoints.length === 1) {
                 // Create a small sphere for a single point
-                const sphereGeometry = new THREE.SphereGeometry(0.075, 16, 16); // 50% of previous size
+                const sphereGeometry = new THREE.SphereGeometry(0.05, 16, 16);
                 trail.geometry = sphereGeometry;
                 trail.position.copy(trailPoints[0]);
             }
@@ -386,6 +411,12 @@
                         isPlaying = false;
                     }
                 }
+            }
+            
+            // Add a gentle pulsating effect to the trail
+            if (trail && trail.material) {
+                const time = Date.now() * 0.0005;
+                trail.material.emissiveIntensity = 1.0 + Math.sin(time) * 0.3;
             }
             
             // Update controls in animation loop
@@ -426,8 +457,14 @@
             const rotateEnd = new THREE.Vector2();
             const rotateDelta = new THREE.Vector2();
             
-            // Center of rotation is at the origin (where axes meet)
-            const target = new THREE.Vector3(0, 0, 0);
+            // Use the first data point as center of rotation (if available)
+            let target = new THREE.Vector3(0, 0, 0);
+            if (quaternionData && quaternionData.length > 0) {
+                const firstPoint = new THREE.Vector3(0, 0, -1);
+                firstPoint.applyQuaternion(quaternionData[0].quaternion);
+                firstPoint.multiplyScalar(1.5);
+                target.copy(firstPoint);
+            }
             
             const changeEvent = { type: 'change' };
             const startEvent = { type: 'start' };
@@ -435,7 +472,7 @@
             
             // Methods
             this.update = function() {
-                // Always look at the origin (where the axes meet)
+                // Always look at the target (first data point)
                 scope.object.lookAt(target);
                 return true;
             };
