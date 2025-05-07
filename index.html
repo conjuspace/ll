@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quaternion Motion Visualizer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background-color: #000;
+        }
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 5px;
+            cursor: pointer;
+            background: #4CAF50;
+            border: none;
+            color: white;
+            border-radius: 4px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        #fileInput {
+            display: none;
+        }
+        #uploadLabel {
+            padding: 8px 16px;
+            margin: 5px;
+            cursor: pointer;
+            background: #2196F3;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        #uploadLabel:hover {
+            background: #0b7dda;
+        }
+        #info {
+            color: #ddd;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <button id="playButton">Play</button>
+            <button id="pauseButton">Pause</button>
+            <button id="resetButton">Reset</button>
+            <label id="uploadLabel" for="fileInput">Upload CSV</label>
+            <input type="file" id="fileInput" accept=".csv">
+            <div id="info">Quaternion: w=0, x=0, y=0, z=0<br>Time: 0.00s</div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Global variables
+        let scene, camera, renderer, controls;
+        let trail, trailPoints = [];
+        let quaternionData = [];
+        let currentIndex = 0;
+        let isPlaying = false;
+        let animationId;
+        let clock = new THREE.Clock();
+        
+        // Setup Three.js scene
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+            
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('container').appendChild(renderer.domElement);
+            
+            // Add orbit controls for 3D rotation with mouse
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.25;
+            controls.enableZoom = true;
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+            
+            // Create coordinate axes
+            const axesHelper = new THREE.AxesHelper(3);
+            scene.add(axesHelper);
+            
+            // Initialize trail with a dummy geometry
+            const trailMaterial = new THREE.MeshStandardMaterial({
+                color: 0x4ecdc4,
+                emissive: 0x1e6e6a,
+                emissiveIntensity: 0.5,
+                metalness: 0.3,
+                roughness: 0.2
+            });
+            
+            trail = new THREE.Mesh(
+                new THREE.BufferGeometry(),
+                trailMaterial
+            );
+            scene.add(trail);
+            
+            // Parse default data
+            parseDefaultData();
+            
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            document.getElementById('playButton').addEventListener('click', play);
+            document.getElementById('pauseButton').addEventListener('click', pause);
+            document.getElementById('resetButton').addEventListener('click', reset);
+            document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Parse the default quaternion data
+        function parseDefaultData() {
+            const defaultData = `timestamp,w,x,y,z
+0.0,0.64539,0.74036,-0.13666,-0.12903
+0.0312,0.64417,0.74243,-0.13239,-0.1275
+0.09063,0.64276,0.74463,-0.12939,-0.12482
+0.14969,0.64221,0.74493,-0.13,-0.12543
+0.20974,0.63892,0.74823,-0.12799,-0.12469
+0.23986,0.63928,0.74756,-0.13007,-0.125
+0.30012,0.64191,0.74506,-0.13098,-0.12506
+0.35981,0.64526,0.7406,-0.13556,-0.12946
+0.41978,0.64587,0.73877,-0.13739,-0.13477
+0.44968,0.63733,0.74689,-0.13342,-0.13464
+0.50968,0.64221,0.74176,-0.13092,-0.14209
+0.57058,0.64148,0.74219,-0.13202,-0.14209
+0.6612,0.6521,0.73138,-0.13641,-0.14563
+0.66167,0.66083,0.72003,-0.14148,-0.15771
+0.75055,0.67133,0.70697,-0.14197,-0.17151
+0.7801,0.68469,0.68964,-0.14032,-0.18945
+0.87055,0.70081,0.67096,-0.13556,-0.20062
+0.87208,0.7193,0.64917,-0.12677,-0.2124
+0.9303,0.74274,0.6239,-0.11853,-0.21228
+0.99102,0.77393,0.57977,-0.11353,-0.22797
+1.05028,0.79529,0.55835,-0.10309,-0.21246
+1.0797,0.8172,0.52362,-0.10205,-0.21814
+1.13959,0.83527,0.49103,-0.10101,-0.22583
+1.19976,0.85339,0.45306,-0.10114,-0.237
+1.22992,0.87012,0.41479,-0.09973,-0.24677
+1.28974,0.88159,0.38422,-0.10004,-0.25531
+1.34983,0.89331,0.35437,-0.09851,-0.25836
+1.40979,0.90552,0.32178,-0.09613,-0.25928
+1.43961,0.91443,0.29401,-0.09595,-0.26111
+1.49972,0.92047,0.27136,-0.0979,-0.26355
+1.56266,0.92834,0.24762,-0.0976,-0.25958
+1.62053,0.93353,0.23059,-0.09741,-0.25671
+1.65229,0.9353,0.22479,-0.09644,-0.25568
+1.70999,0.94025,0.20624,-0.0946,-0.25385
+1.77057,0.94366,0.18982,-0.09528,-0.25372
+1.83062,0.94427,0.18274,-0.09509,-0.25665
+1.8606,0.94635,0.17035,-0.09186,-0.25873
+1.92026,0.94543,0.17181,-0.08972,-0.26196
+1.98051,0.94696,0.164,-0.08319,-0.26355
+2.07018,0.94843,0.15686,-0.08472,-0.26208
+2.07192,0.94843,0.15631,-0.08417,-0.2627
+2.13032,0.94873,0.15649,-0.08398,-0.26154
+2.21984,0.94843,0.15698,-0.08606,-0.26154
+2.24998,0.94855,0.15741,-0.08636,-0.26074
+2.28064,0.94891,0.15503,-0.08704,-0.26056
+2.33965,0.9494,0.15369,-0.08795,-0.25946
+2.39996,0.94983,0.14996,-0.08832,-0.25989
+2.4631,0.9505,0.14563,-0.09015,-0.25928
+2.49008,0.95111,0.14453,-0.09027,-0.25769
+2.55054,0.95166,0.14246,-0.08997,-0.25671
+2.67092,0.95166,0.14172,-0.09058,-0.25696
+2.67139,0.95239,0.13788,-0.0899,-0.25647
+2.69952,0.95319,0.13239,-0.09021,-0.25653
+2.76057,0.95404,0.12799,-0.08911,-0.25586
+2.8196,0.95435,0.12695,-0.08966,-0.25513
+2.85009,0.95459,0.12622,-0.08942,-0.25452
+2.9097,0.95526,0.12469,-0.08844,-0.25323
+2.96993,0.95581,0.12091,-0.08887,-0.25281
+3.02994,0.95605,0.11938,-0.08997,-0.25214
+3.091,0.95581,0.11743,-0.09271,-0.25317
+3.11971,0.95312,0.13269,-0.09619,-0.25433
+3.17977,0.94336,0.18439,-0.10291,-0.25598
+3.2399,0.92993,0.24164,-0.11151,-0.25385
+3.2696,0.91364,0.30066,-0.12231,-0.24481
+3.33113,0.88666,0.36871,-0.13849,-0.24225
+3.41992,0.84937,0.44824,-0.15784,-0.22968
+3.44974,0.81342,0.50879,-0.17383,-0.22205
+3.50993,0.77563,0.5672,-0.17981,-0.21063
+3.54005,0.73505,0.617,-0.18463,-0.2121
+3.63096,0.70233,0.6582,-0.18549,-0.19775
+3.65966,0.67944,0.68738,-0.18164,-0.18134
+3.69242,0.67035,0.69794,-0.17926,-0.17706
+3.75031,0.66528,0.70514,-0.17487,-0.17194
+3.80964,0.66272,0.70941,-0.17474,-0.16449
+3.87028,0.6637,0.7099,-0.16791,-0.16534
+3.92979,0.65588,0.71735,-0.16382,-0.16852
+3.9594,0.6532,0.71936,-0.16486,-0.16943
+4.01997,0.64484,0.72534,-0.16626,-0.17444
+4.08012,0.63538,0.73456,-0.172,-0.16486
+4.10942,0.64062,0.73029,-0.16217,-0.1731
+4.16949,0.63379,0.73865,-0.15802,-0.16663
+4.22972,0.62561,0.74719,-0.15778,-0.15967
+4.28961,0.62512,0.74756,-0.15936,-0.15784
+4.31947,0.62506,0.74695,-0.16077,-0.15973
+4.38024,0.625,0.74628,-0.15961,-0.16431
+4.43965,0.6236,0.74768,-0.15894,-0.16364
+4.49962,0.6217,0.74951,-0.15771,-0.1637
+4.52999,0.61298,0.75824,-0.15503,-0.15924
+4.59082,0.61017,0.76123,-0.15613,-0.15436
+4.65034,0.61212,0.75952,-0.15881,-0.15228
+4.71004,0.61157,0.76007,-0.15985,-0.15057
+4.74017,0.6106,0.76099,-0.16095,-0.14886
+4.80025,0.61066,0.76086,-0.16162,-0.14825
+4.86014,0.61041,0.76117,-0.16119,-0.14825
+4.9201,0.61151,0.76007,-0.16254,-0.14807
+4.9496,0.60846,0.76306,-0.16125,-0.14655
+5.00965,0.60846,0.76306,-0.16119,-0.14661`;
+            
+            parseCSV(defaultData);
+        }
+        
+        // Parse CSV data
+        function parseCSV(csvData) {
+            const lines = csvData.trim().split('\n');
+            const headers = lines[0].split(',');
+            
+            quaternionData = [];
+            trailPoints = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                
+                if (values.length === 5) {
+                    quaternionData.push({
+                        timestamp: parseFloat(values[0]),
+                        quaternion: new THREE.Quaternion(
+                            parseFloat(values[2]), // x
+                            parseFloat(values[3]), // y
+                            parseFloat(values[4]), // z
+                            parseFloat(values[1])  // w
+                        )
+                    });
+                }
+            }
+            
+            // Reset visualization
+            reset();
+        }
+        
+        // Handle file upload
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    parseCSV(e.target.result);
+                };
+                reader.readAsText(file);
+            }
+        }
+        
+        // Play animation
+        function play() {
+            if (!isPlaying && quaternionData.length > 0) {
+                isPlaying = true;
+                clock.start();
+            }
+        }
+        
+        // Pause animation
+        function pause() {
+            isPlaying = false;
+        }
+        
+        // Reset animation
+        function reset() {
+            isPlaying = false;
+            currentIndex = 0;
+            trailPoints = [];
+            
+            if (quaternionData.length > 0) {
+                updatePosition(0);
+            }
+            
+            updateInfoPanel();
+        }
+        
+        // Update position based on index
+        function updatePosition(index) {
+            if (index >= 0 && index < quaternionData.length) {
+                const data = quaternionData[index];
+                
+                // Calculate position based on quaternion
+                const forward = new THREE.Vector3(0, 0, -1);
+                forward.applyQuaternion(data.quaternion);
+                forward.multiplyScalar(1.5); // Make the trail 50% of original size (was 3)
+                
+                trailPoints.push(forward.clone());
+                
+                // Update trail
+                updateTrail();
+                
+                // Update info panel
+                updateInfoPanel();
+            }
+        }
+        
+        // Update trail line
+        function updateTrail() {
+            if (trailPoints.length > 1) {
+                // Create tube geometry for thicker line
+                const path = new THREE.CatmullRomCurve3(trailPoints);
+                const tubeGeometry = new THREE.TubeGeometry(
+                    path,
+                    Math.max(64, trailPoints.length * 3), // tubular segments
+                    0.075, // radius - 50% of previous size (was 0.15)
+                    8, // radial segments
+                    false // closed
+                );
+                
+                if (trail.geometry) {
+                    trail.geometry.dispose();
+                }
+                trail.geometry = tubeGeometry;
+            } else if (trailPoints.length === 1) {
+                // Create a small sphere for a single point
+                const sphereGeometry = new THREE.SphereGeometry(0.075, 16, 16); // 50% of previous size
+                trail.geometry = sphereGeometry;
+                trail.position.copy(trailPoints[0]);
+            }
+        }
+        
+        // Update info panel
+        function updateInfoPanel() {
+            if (currentIndex < quaternionData.length) {
+                const data = quaternionData[currentIndex];
+                const q = data.quaternion;
+                const infoElement = document.getElementById('info');
+                infoElement.innerHTML = `Quaternion: w=${q.w.toFixed(5)}, x=${q.x.toFixed(5)}, y=${q.y.toFixed(5)}, z=${q.z.toFixed(5)}<br>Time: ${data.timestamp.toFixed(2)}s`;
+            }
+        }
+        
+        // Animation loop
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+            
+            if (isPlaying && quaternionData.length > 0) {
+                const elapsed = clock.getElapsedTime();
+                const targetTime = quaternionData[currentIndex].timestamp;
+                
+                if (elapsed >= targetTime) {
+                    updatePosition(currentIndex);
+                    currentIndex++;
+                    
+                    if (currentIndex >= quaternionData.length) {
+                        isPlaying = false;
+                    }
+                }
+            }
+            
+            // Update controls in animation loop
+            if (controls) {
+                controls.update();
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Handle window resize
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // OrbitControls implementation for Three.js
+        // This is a simplified version of OrbitControls to avoid external dependencies
+        function OrbitControls(camera, domElement) {
+            this.object = camera;
+            this.domElement = domElement;
+            
+            // API
+            this.enabled = true;
+            this.enableDamping = false;
+            this.dampingFactor = 0.05;
+            this.enableZoom = true;
+            this.zoomSpeed = 1.0;
+            
+            // Internals
+            const scope = this;
+            const STATE = { NONE: -1, ROTATE: 0, ZOOM: 1 };
+            let state = STATE.NONE;
+            
+            const EPS = 0.000001;
+            const rotateStart = new THREE.Vector2();
+            const rotateEnd = new THREE.Vector2();
+            const rotateDelta = new THREE.Vector2();
+            
+            // Center of rotation is at the origin (where axes meet)
+            const target = new THREE.Vector3(0, 0, 0);
+            
+            const changeEvent = { type: 'change' };
+            const startEvent = { type: 'start' };
+            const endEvent = { type: 'end' };
+            
+            // Methods
+            this.update = function() {
+                // Always look at the origin (where the axes meet)
+                scope.object.lookAt(target);
+                return true;
+            };
+            
+            // Event callbacks
+            function handleMouseDownRotate(event) {
+                rotateStart.set(event.clientX, event.clientY);
+            }
+            
+            function handleMouseMoveRotate(event) {
+                rotateEnd.set(event.clientX, event.clientY);
+                rotateDelta.subVectors(rotateEnd, rotateStart);
+                
+                // Rotate the camera around the target point (origin)
+                const element = scope.domElement;
+                const rotateSpeed = 1.0;
+                
+                // Calculate rotation angles
+                const rotateY = 2 * Math.PI * rotateDelta.x / element.clientWidth * rotateSpeed;
+                const rotateX = 2 * Math.PI * rotateDelta.y / element.clientHeight * rotateSpeed;
+                
+                // Create a dummy object at the camera position
+                const cameraPosition = scope.object.position.clone();
+                
+                // Rotate around the target point
+                // First around Y axis (left/right)
+                cameraPosition.sub(target);
+                cameraPosition.applyAxisAngle(new THREE.Vector3(0, 1, 0), -rotateY);
+                cameraPosition.add(target);
+                
+                // Then around X axis (up/down)
+                const right = new THREE.Vector3();
+                right.crossVectors(new THREE.Vector3(0, 1, 0), cameraPosition.clone().sub(target).normalize()).normalize();
+                cameraPosition.sub(target);
+                cameraPosition.applyAxisAngle(right, rotateX);
+                cameraPosition.add(target);
+                
+                // Apply the new position
+                scope.object.position.copy(cameraPosition);
+                
+                // Look at the target
+                scope.object.lookAt(target);
+                
+                rotateStart.copy(rotateEnd);
+            }
+            
+            function handleMouseWheel(event) {
+                if (!scope.enableZoom) return;
+                
+                event.preventDefault();
+                event.stopPropagation();
+                
+                const delta = event.deltaY;
+                
+                // Get direction from camera to target
+                const direction = scope.object.position.clone().sub(target).normalize();
+                
+                if (delta > 0) {
+                    // Zoom out - move away from target
+                    scope.object.position.addScaledVector(direction, 0.5);
+                } else {
+                    // Zoom in - move towards target, but not too close
+                    const currentDistance = scope.object.position.distanceTo(target);
+                    if (currentDistance > 1.0) {
+                        scope.object.position.addScaledVector(direction, -0.5);
+                    }
+                }
+            }
+            
+            function onMouseDown(event) {
+                event.preventDefault();
+                
+                scope.domElement.focus ? scope.domElement.focus() : window.focus();
+                
+                if (event.button === 0) {
+                    state = STATE.ROTATE;
+                    handleMouseDownRotate(event);
+                }
+                
+                document.addEventListener('mousemove', onMouseMove, false);
+                document.addEventListener('mouseup', onMouseUp, false);
+            }
+            
+            function onMouseMove(event) {
+                event.preventDefault();
+                
+                if (state === STATE.ROTATE) {
+                    handleMouseMoveRotate(event);
+                }
+            }
+            
+            function onMouseUp(event) {
+                document.removeEventListener('mousemove', onMouseMove, false);
+                document.removeEventListener('mouseup', onMouseUp, false);
+                
+                state = STATE.NONE;
+            }
+            
+            function onMouseWheel(event) {
+                handleMouseWheel(event);
+            }
+            
+            // Event listeners
+            scope.domElement.addEventListener('contextmenu', function(event) { event.preventDefault(); }, false);
+            scope.domElement.addEventListener('mousedown', onMouseDown, false);
+            scope.domElement.addEventListener('wheel', onMouseWheel, false);
+            
+            // Set initial position
+            this.object.position.set(0, 0, 5);
+            this.object.lookAt(target);
+            
+            return this;
+        }
+        
+        // Initialize the scene
+        init();
+    </script>
+</body>
+</html>
